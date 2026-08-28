@@ -1,4 +1,4 @@
-package main
+package model
 
 import "time"
 
@@ -60,4 +60,10 @@ type ListQuery struct {
 	IsActive *bool
 	MinGrade *float64
 	MaxGrade *float64
+}
+
+// Offset menghitung berapa baris yang dilewati untuk halaman ini.
+// Perhitungan ini dipakai langsung oleh SQL (LIMIT/OFFSET).
+func (q ListQuery) Offset() int {
+	return (q.Page - 1) * q.Limit
 }
