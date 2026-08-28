@@ -1,27 +1,31 @@
 package main
 
 import (
+	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
+
+	"api-students/app/model"
 )
 
 func ok(c *fiber.Ctx, message string, data any) error {
-	return c.Status(fiber.StatusOK).JSON(WebResponse{
+	return c.Status(fiber.StatusOK).JSON(model.WebResponse{
 		Success: true, Message: message, Data: data,
 	})
 }
 
-func okList(c *fiber.Ctx, message string, data any, meta *Meta) error {
-	return c.Status(fiber.StatusOK).JSON(WebResponse{
+func okList(c *fiber.Ctx, message string, data any, meta *model.Meta) error {
+	return c.Status(fiber.StatusOK).JSON(model.WebResponse{
 		Success: true, Message: message, Data: data, Meta: meta,
 	})
 }
 
 func created(c *fiber.Ctx, message string, data any, location string) error {
 	c.Set("Location", location)
-	return c.Status(fiber.StatusCreated).JSON(WebResponse{
+	return c.Status(fiber.StatusCreated).JSON(model.WebResponse{
 		Success: true, Message: message, Data: data,
 	})
 }
@@ -31,11 +35,11 @@ func noContent(c *fiber.Ctx) error {
 }
 
 func fail(c *fiber.Ctx, status int, message string) error {
-	return c.Status(status).JSON(WebResponse{Success: false, Message: message})
+	return c.Status(status).JSON(model.WebResponse{Success: false, Message: message})
 }
 
 func failValidation(c *fiber.Ctx, errs map[string]string) error {
-	return c.Status(fiber.StatusUnprocessableEntity).JSON(WebResponse{
+	return c.Status(fiber.StatusUnprocessableEntity).JSON(model.WebResponse{
 		Success: false, Message: "validasi gagal", Errors: errs,
 	})
 }
@@ -46,8 +50,8 @@ var allowedSort = map[string]bool{
 }
 
 // parseListQuery membaca query string dan memberi nilai bawaan yang aman.
-func parseListQuery(c *fiber.Ctx) ListQuery {
-	q := ListQuery{
+func parseListQuery(c *fiber.Ctx) model.ListQuery {
+	q := model.ListQuery{
 		Page:   c.QueryInt("page", 1),
 		Limit:  c.QueryInt("limit", 10),
 		Search: strings.TrimSpace(c.Query("search")),
@@ -60,7 +64,7 @@ func parseListQuery(c *fiber.Ctx) ListQuery {
 	if q.Limit < 1 {
 		q.Limit = 10
 	}
-	if q.Limit > 50 { // batas atas untuk students: 50 (data akademik cenderung ditampilkan lebih sedikit per halaman)
+	if q.Limit > 50 {
 		q.Limit = 50
 	}
 	if !allowedSort[q.Sort] {
@@ -85,4 +89,19 @@ func parseListQuery(c *fiber.Ctx) ListQuery {
 		}
 	}
 	return q
+}
+
+func paramID(c *fiber.Ctx) (int, bool) {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id < 1 {
+		return 0, false
+	}
+	return id, true
+}
+
+// reqCtx memberi batas waktu untuk setiap operasi basis data.
+// Tanpa batas waktu, satu query yang menggantung dapat menahan koneksi
+// selamanya dan lama-lama menghabiskan seluruh isi pool.
+func reqCtx(c *fiber.Ctx) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(c.UserContext(), 5*time.Second)
 }
