@@ -39,20 +39,33 @@ func corsPolicy(allowedOrigins string) fiber.Handler {
 }
 
 // RequestLogger mencatat setiap request ke log terstruktur.
+// Bila request sudah melewati RequireAuth, user_id dan role pemanggil
+// ikut dicatat — berguna untuk audit siapa melakukan apa, terutama
+// pada endpoint yang diatur RBAC seperti students.
 func RequestLogger(logger *slog.Logger) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		start := time.Now()
 		err := c.Next()
 
 		requestID, _ := c.Locals("requestid").(string)
-		logger.Info("http_request",
+
+		fields := []any{
 			slog.String("request_id", requestID),
 			slog.String("method", c.Method()),
 			slog.String("path", c.Path()),
 			slog.Int("status", c.Response().StatusCode()),
 			slog.Duration("duration", time.Since(start)),
 			slog.String("ip", c.IP()),
-		)
+		}
+
+		if authUser, ok := helper.CurrentUser(c); ok {
+			fields = append(fields,
+				slog.Int("user_id", authUser.UserID),
+				slog.String("role", authUser.Role),
+			)
+		}
+
+		logger.Info("http_request", fields...)
 		return err
 	}
 }
