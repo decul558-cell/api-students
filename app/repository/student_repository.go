@@ -13,15 +13,12 @@ import (
 )
 
 // Sentinel error: error milik lapisan repository, bukan error milik pgx.
-// Lapisan atas (handler) cukup mengenal dua ini dan tidak perlu tahu
-// basis data macam apa yang ada di baliknya.
 var (
 	ErrNotFound  = errors.New("data tidak ditemukan")
 	ErrDuplicate = errors.New("data sudah ada")
 )
 
 // StudentRepository adalah KONTRAK penyimpanan data mahasiswa.
-// Tidak ada satu pun kata "SQL" atau "postgres" di sini.
 type StudentRepository interface {
 	FindAll(ctx context.Context, q model.ListQuery) ([]model.Student, int, error)
 	FindByID(ctx context.Context, id int) (model.Student, error)
@@ -30,9 +27,6 @@ type StudentRepository interface {
 	Delete(ctx context.Context, id int) error
 }
 
-// kolomUrut adalah daftar putih: pemetaan dari nilai yang boleh dikirim
-// klien ke nama kolom yang sebenarnya. ORDER BY tidak dapat memakai
-// parameter, sehingga nama kolom terpaksa disisipkan sebagai teks.
 var kolomUrut = map[string]string{
 	"id":         "id",
 	"nim":        "nim",
@@ -45,14 +39,10 @@ type studentPostgresRepository struct {
 	pool *pgxpool.Pool
 }
 
-// NewStudentRepository mengembalikan interface, bukan struct konkret.
 func NewStudentRepository(pool *pgxpool.Pool) StudentRepository {
 	return &studentPostgresRepository{pool: pool}
 }
 
-// buildFilter menyusun bagian WHERE beserta argumennya.
-// Nilai dari klien SELALU menjadi argumen ($1, $2, ...), tidak pernah
-// disambung langsung ke dalam teks SQL.
 func buildFilter(q model.ListQuery) (string, []any) {
 	where := " WHERE 1 = 1"
 	args := []any{}
@@ -94,7 +84,7 @@ func (r *studentPostgresRepository) FindAll(
 	}
 
 	sqlText := fmt.Sprintf(
-		`SELECT id, nim, name, grade, is_active, created_at
+		`SELECT id, nim, name, grade, is_active, owner_id, created_at
 		 FROM students%s
 		 ORDER BY %s %s
 		 LIMIT $%d OFFSET $%d`,
@@ -111,7 +101,8 @@ func (r *studentPostgresRepository) FindAll(
 	hasil := []model.Student{}
 	for rows.Next() {
 		var s model.Student
-		if err := rows.Scan(&s.ID, &s.NIM, &s.Name, &s.Grade, &s.IsActive, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.NIM, &s.Name, &s.Grade, &s.IsActive,
+			&s.OwnerID, &s.CreatedAt); err != nil {
 			return nil, 0, fmt.Errorf("membaca baris mahasiswa: %w", err)
 		}
 		hasil = append(hasil, s)
@@ -128,9 +119,9 @@ func (r *studentPostgresRepository) FindByID(
 ) (model.Student, error) {
 	var s model.Student
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, nim, name, grade, is_active, created_at
+		`SELECT id, nim, name, grade, is_active, owner_id, created_at
 		 FROM students WHERE id = $1`, id,
-	).Scan(&s.ID, &s.NIM, &s.Name, &s.Grade, &s.IsActive, &s.CreatedAt)
+	).Scan(&s.ID, &s.NIM, &s.Name, &s.Grade, &s.IsActive, &s.OwnerID, &s.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return model.Student{}, ErrNotFound
@@ -140,14 +131,17 @@ func (r *studentPostgresRepository) FindByID(
 	return s, nil
 }
 
+// Create menyimpan owner_id yang sudah ditentukan SERVICE (dari identitas
+// pemanggil), bukan dari client. Repository di sini cuma menyimpan apa
+// yang dikirim; keputusan "owner_id-nya siapa" sudah selesai di layer atas.
 func (r *studentPostgresRepository) Create(
 	ctx context.Context, s model.Student,
 ) (model.Student, error) {
 	err := r.pool.QueryRow(ctx,
-		`INSERT INTO students (nim, name, grade, is_active)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO students (nim, name, grade, is_active, owner_id)
+		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING id, created_at`,
-		s.NIM, s.Name, s.Grade, s.IsActive,
+		s.NIM, s.Name, s.Grade, s.IsActive, s.OwnerID,
 	).Scan(&s.ID, &s.CreatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -158,15 +152,17 @@ func (r *studentPostgresRepository) Create(
 	return s, nil
 }
 
+// Update sengaja TIDAK menyertakan owner_id pada SET. Kepemilikan data
+// tidak boleh berpindah lewat endpoint update biasa.
 func (r *studentPostgresRepository) Update(
 	ctx context.Context, s model.Student,
 ) (model.Student, error) {
 	err := r.pool.QueryRow(ctx,
 		`UPDATE students SET nim = $1, name = $2, grade = $3, is_active = $4
 		 WHERE id = $5
-		 RETURNING id, nim, name, grade, is_active, created_at`,
+		 RETURNING id, nim, name, grade, is_active, owner_id, created_at`,
 		s.NIM, s.Name, s.Grade, s.IsActive, s.ID,
-	).Scan(&s.ID, &s.NIM, &s.Name, &s.Grade, &s.IsActive, &s.CreatedAt)
+	).Scan(&s.ID, &s.NIM, &s.Name, &s.Grade, &s.IsActive, &s.OwnerID, &s.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return model.Student{}, ErrNotFound
@@ -190,8 +186,6 @@ func (r *studentPostgresRepository) Delete(ctx context.Context, id int) error {
 	return nil
 }
 
-// isUniqueViolation memeriksa apakah error berasal dari pelanggaran
-// batasan UNIQUE. Kode 23505 adalah kode resmi PostgreSQL untuk itu.
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {

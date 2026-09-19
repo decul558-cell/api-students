@@ -8,10 +8,14 @@ type Student struct {
 	Name      string    `json:"name"`
 	Grade     float64   `json:"grade"`
 	IsActive  bool      `json:"is_active"`
+	OwnerID   int       `json:"owner_id"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// POST — semua field wajib
+// POST — semua field wajib. Perhatikan: TIDAK ADA field OwnerID di sini.
+// Bila ada, siapa pun bisa mengaku-aku sebagai pemilik lain lewat body
+// request (mass assignment). OwnerID selalu diisi server dari identitas
+// pemanggil, bukan dari apa yang dikirim client.
 type CreateStudentRequest struct {
 	NIM   string  `json:"nim"`
 	Name  string  `json:"name"`
@@ -62,8 +66,6 @@ type ListQuery struct {
 	MaxGrade *float64
 }
 
-// Offset menghitung berapa baris yang dilewati untuk halaman ini.
-// Perhitungan ini dipakai langsung oleh SQL (LIMIT/OFFSET).
 func (q ListQuery) Offset() int {
 	return (q.Page - 1) * q.Limit
 }
