@@ -1,4 +1,4 @@
 .env
+loadtest
 logs/
 UTS/
-loadtest
