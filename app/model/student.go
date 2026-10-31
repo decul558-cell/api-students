@@ -12,34 +12,35 @@ type Student struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// POST — semua field wajib. Perhatikan: TIDAK ADA field OwnerID di sini.
-// Bila ada, siapa pun bisa mengaku-aku sebagai pemilik lain lewat body
-// request (mass assignment). OwnerID selalu diisi server dari identitas
-// pemanggil, bukan dari apa yang dikirim client.
+// POST — semua field wajib. Validasi sekarang deklaratif lewat tag
+// `validate`, dipanggil helper.ValidateStruct(req) di service.
+// Tidak ada field OwnerID di sini (mencegah mass assignment).
 type CreateStudentRequest struct {
-	NIM   string  `json:"nim"`
-	Name  string  `json:"name"`
-	Grade float64 `json:"grade"`
+	NIM   string  `json:"nim" validate:"required,min=3,max=20,alphanum"`
+	Name  string  `json:"name" validate:"required,min=2,max=100"`
+	Grade float64 `json:"grade" validate:"gte=0,lte=100"`
 }
 
 // PUT — ganti seluruh isi, jadi field bertipe biasa dan semuanya wajib
 type ReplaceStudentRequest struct {
-	NIM      string  `json:"nim"`
-	Name     string  `json:"name"`
-	Grade    float64 `json:"grade"`
+	NIM      string  `json:"nim" validate:"required,min=3,max=20,alphanum"`
+	Name     string  `json:"name" validate:"required,min=2,max=100"`
+	Grade    float64 `json:"grade" validate:"gte=0,lte=100"`
 	IsActive bool    `json:"is_active"`
 }
 
-// PATCH — ubah sebagian, jadi field bertipe pointer supaya bisa dibedakan
-// antara "tidak dikirim" (nil) dan "dikirim bernilai kosong"
+// PATCH — SEMUA field bertipe pointer, supaya validator bisa membedakan
+// "tidak dikirim" (nil, dilewati lewat omitnil) dari "dikirim tapi salah"
+// (bukan nil, tetap divalidasi). Ini pelajaran dari Bug #3: field yang
+// tidak konsisten tipenya dengan cara ia dipakai (dereference *req.X,
+// dibandingkan dengan nil) akan ditolak compiler.
 type PatchStudentRequest struct {
-	NIM      *string  `json:"nim,omitempty"`
-	Name     *string  `json:"name,omitempty"`
-	Grade    *float64 `json:"grade,omitempty"`
+	NIM      *string  `json:"nim,omitempty" validate:"omitnil,min=3,max=20,alphanum"`
+	Name     *string  `json:"name,omitempty" validate:"omitnil,min=2,max=100"`
+	Grade    *float64 `json:"grade,omitempty" validate:"omitnil,gte=0,lte=100"`
 	IsActive *bool    `json:"is_active,omitempty"`
 }
 
-// Amplop baku untuk semua respons
 type WebResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
@@ -64,8 +65,18 @@ type ListQuery struct {
 	IsActive *bool
 	MinGrade *float64
 	MaxGrade *float64
+
+	// Untuk cursor-based pagination (endpoint terpisah dari List biasa).
+	Cursor string
 }
 
 func (q ListQuery) Offset() int {
 	return (q.Page - 1) * q.Limit
+}
+
+// CursorMeta menggantikan pagination berbasis nomor halaman untuk
+// endpoint yang mendukung cursor-based pagination (lihat D.3).
+type CursorMeta struct {
+	NextCursor string `json:"next_cursor,omitempty"`
+	HasMore    bool   `json:"has_more"`
 }

@@ -27,3 +27,4 @@ func CanAccessStudent(
 	}
 	return perms.Can(current.Role, anyPermission)
 }
+

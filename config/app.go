@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"log/slog"
 
 	"github.com/gofiber/fiber/v2"
@@ -32,21 +33,54 @@ func NewApp(logger *slog.Logger, deps route.Dependencies) *fiber.App {
 	return app
 }
 
-// newErrorHandler adalah jaring pengaman terakhir: error yang tidak
-// tertangani di service berakhir di sini dengan format yang tetap konsisten.
+// newErrorHandler adalah SATU-SATUNYA tempat yang menerjemahkan error
+// menjadi response JSON. Handler dan service tidak pernah menulis response
+// error secara langsung — mereka cukup me-return *helper.AppError, dan
+// Fiber memanggil fungsi ini secara otomatis begitu handler mengembalikan
+// error apa pun.
 func newErrorHandler(logger *slog.Logger) fiber.ErrorHandler {
 	return func(c *fiber.Ctx, err error) error {
-		status := fiber.StatusInternalServerError
-		message := "terjadi error pada server"
-		if e, ok := err.(*fiber.Error); ok {
-			status = e.Code
-			message = e.Message
+		var appErr *helper.AppError
+		if !errors.As(err, &appErr) {
+			// Error yang bukan AppError sama sekali (misalnya error bawaan
+			// Fiber, atau panic yang ditangkap recover) diperlakukan
+			// sebagai kegagalan internal — fail closed, bukan menebak.
+			if fe, ok := err.(*fiber.Error); ok {
+				appErr = &helper.AppError{Status: fe.Code, Code: "FIBER_ERROR", Message: fe.Message}
+			} else {
+				appErr = helper.Internal(err)
+			}
 		}
-		logger.Error("unhandled_error",
-			slog.String("path", c.Path()),
-			slog.Int("status", status),
-			slog.String("error", err.Error()),
-		)
-		return helper.Fail(c, status, message)
+
+		requestID, _ := c.Locals("requestid").(string)
+
+		// PERHATIKAN ARAH KONDISI INI: >= 500 berarti kesalahan SISTEM KITA
+		// (bug, koneksi database putus, dsb) -> layak Error, perlu ditindak.
+		// < 500 berarti kesalahan PEMAKAI API (salah isi, tidak berhak, dsb)
+		// -> cukup Warn, bagian normal dari lalu lintas API.
+		if appErr.Status >= fiber.StatusInternalServerError {
+			logger.Error("request_failed",
+				slog.String("request_id", requestID),
+				slog.String("path", c.Path()),
+				slog.Int("status", appErr.Status),
+				slog.String("code", appErr.Code),
+				slog.String("error", appErr.Error()),
+			)
+		} else {
+			logger.Warn("request_rejected",
+				slog.String("request_id", requestID),
+				slog.String("path", c.Path()),
+				slog.Int("status", appErr.Status),
+				slog.String("code", appErr.Code),
+			)
+		}
+
+		return c.Status(appErr.Status).JSON(fiber.Map{
+			"success":    false,
+			"code":       appErr.Code,
+			"message":    appErr.Message,
+			"fields":     appErr.Fields,
+			"request_id": requestID,
+		})
 	}
 }

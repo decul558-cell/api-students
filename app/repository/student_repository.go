@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"api-students/app/model"
+	"api-students/helper"
 )
 
 // Sentinel error: error milik lapisan repository, bukan error milik pgx.
@@ -25,6 +26,7 @@ type StudentRepository interface {
 	Create(ctx context.Context, s model.Student) (model.Student, error)
 	Update(ctx context.Context, s model.Student) (model.Student, error)
 	Delete(ctx context.Context, id int) error
+	FindWithCursor(ctx context.Context, cursor string, limit int) ([]model.Student, string, bool, error)
 }
 
 var kolomUrut = map[string]string{
@@ -184,6 +186,78 @@ func (r *studentPostgresRepository) Delete(ctx context.Context, id int) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// FindWithCursor mengambil satu halaman data terurut dari yang TERBARU,
+// memakai keyset pagination (bukan OFFSET). Mengembalikan data, cursor
+// untuk halaman berikutnya, dan apakah masih ada halaman setelahnya.
+//
+// PERHATIKAN: ORDER BY di sini (created_at DESC, id DESC) HARUS SAMA
+// PERSIS dengan urutan kolom pada index students_created_at_id_desc_idx.
+// Bila arahnya tidak cocok (Bug #8), PostgreSQL tidak bisa memakai index
+// secara optimal, dan urutan "dari yang terbaru" bisa jadi salah.
+func (r *studentPostgresRepository) FindWithCursor(
+	ctx context.Context, cursor string, limit int,
+) ([]model.Student, string, bool, error) {
+	cursorCreatedAt, cursorID, err := helper.DecodeCursor(cursor)
+	if err != nil {
+		return nil, "", false, err
+	}
+
+	var rows pgx.Rows
+	if cursor == "" {
+		// Halaman pertama: tidak ada batas bawah.
+		rows, err = r.pool.Query(ctx,
+			`SELECT id, nim, name, grade, is_active, owner_id, created_at
+			 FROM students
+			 ORDER BY created_at DESC, id DESC
+			 LIMIT $1`,
+			limit+1, // ambil satu ekstra untuk tahu apakah masih ada halaman berikutnya
+		)
+	} else {
+		// Keyset: ambil baris yang "lebih lama" dari posisi cursor,
+		// dibandingkan sebagai pasangan (created_at, id) sekaligus --
+		// bukan dua kondisi AND terpisah, supaya baris dengan created_at
+		// sama tapi id lebih kecil tetap tertangkap dengan benar.
+		rows, err = r.pool.Query(ctx,
+			`SELECT id, nim, name, grade, is_active, owner_id, created_at
+			 FROM students
+			 WHERE (created_at, id) < ($1, $2)
+			 ORDER BY created_at DESC, id DESC
+			 LIMIT $3`,
+			cursorCreatedAt, cursorID, limit+1,
+		)
+	}
+	if err != nil {
+		return nil, "", false, fmt.Errorf("mengambil halaman mahasiswa: %w", err)
+	}
+	defer rows.Close()
+
+	hasil := []model.Student{}
+	for rows.Next() {
+		var s model.Student
+		if err := rows.Scan(&s.ID, &s.NIM, &s.Name, &s.Grade, &s.IsActive,
+			&s.OwnerID, &s.CreatedAt); err != nil {
+			return nil, "", false, fmt.Errorf("membaca baris mahasiswa: %w", err)
+		}
+		hasil = append(hasil, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", false, fmt.Errorf("membaca hasil query: %w", err)
+	}
+
+	hasMore := len(hasil) > limit
+	if hasMore {
+		hasil = hasil[:limit] // buang baris ekstra yang cuma dipakai untuk deteksi hasMore
+	}
+
+	nextCursor := ""
+	if hasMore && len(hasil) > 0 {
+		last := hasil[len(hasil)-1]
+		nextCursor = helper.EncodeCursor(last.CreatedAt, last.ID)
+	}
+
+	return hasil, nextCursor, hasMore, nil
 }
 
 func isUniqueViolation(err error) bool {

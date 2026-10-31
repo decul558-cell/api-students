@@ -19,6 +19,7 @@ type Dependencies struct {
 	Permissions    *helper.PermissionSet
 	StudentService *service.StudentService
 	AuthService    *service.AuthService
+	CourseService  *service.CourseService
 }
 
 func Register(app *fiber.App, deps Dependencies) {
@@ -46,6 +47,9 @@ func Register(app *fiber.App, deps Dependencies) {
 	students.Get("/",
 		middleware.RequirePermission(perms, "student:list"),
 		deps.StudentService.List)
+	students.Get("/cursor",
+		middleware.RequirePermission(perms, "student:list"),
+		deps.StudentService.ListCursor)
 	students.Post("/",
 		middleware.RequirePermission(perms, "student:create"),
 		deps.StudentService.Create)
@@ -58,6 +62,26 @@ func Register(app *fiber.App, deps Dependencies) {
 	students.Get("/:id", deps.StudentService.Get)
 	students.Put("/:id", deps.StudentService.Replace)
 	students.Patch("/:id", deps.StudentService.Patch)
+
+	// --- kelas dan KRS ---
+	courses := api.Group("/courses",
+		middleware.RequireJSON,
+		middleware.RequireAuth(deps.JWT))
+
+	// "/mine" didaftarkan SEBELUM "/:id". Fiber mencocokkan route sesuai
+	// urutan pendaftaran; bila dibalik, "mine" akan dianggap sebagai :id.
+	courses.Get("/", deps.CourseService.List)
+	courses.Get("/mine", deps.CourseService.Mine)
+	courses.Get("/:id", deps.CourseService.Get)
+	courses.Post("/:id/enroll", deps.CourseService.Enroll)
+	courses.Delete("/:id/enroll", deps.CourseService.Drop)
+	courses.Patch("/:id", middleware.RequirePermission(perms, "course:manage"), deps.CourseService.UpdateQuota)
+
+	// --- pindah kelas ---
+	enrollments := api.Group("/enrollments",
+		middleware.RequireJSON,
+		middleware.RequireAuth(deps.JWT))
+	enrollments.Post("/swap", deps.CourseService.Swap)
 }
 
 // healthCheck melaporkan kondisi layanan beserta databasenya.
@@ -67,8 +91,7 @@ func healthCheck(pool *pgxpool.Pool) fiber.Handler {
 		defer cancel()
 
 		if err := pool.Ping(ctx); err != nil {
-			return helper.Fail(c, fiber.StatusServiceUnavailable,
-				"database tidak dapat dihubungi")
+			return helper.ServiceUnavailable("database tidak dapat dihubungi")
 		}
 		return helper.Success(c, fiber.StatusOK, "server dan database berjalan", nil)
 	}

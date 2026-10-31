@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -42,6 +43,10 @@ func corsPolicy(allowedOrigins string) fiber.Handler {
 // Bila request sudah melewati RequireAuth, user_id dan role pemanggil
 // ikut dicatat — berguna untuk audit siapa melakukan apa, terutama
 // pada endpoint yang diatur RBAC seperti students.
+//
+// Status yang dicatat dihitung ulang dari err (bukan dibaca langsung dari
+// response), karena ErrorHandler belum tentu sempat menulis status yang
+// benar ke response pada titik RequestLogger membaca.
 func RequestLogger(logger *slog.Logger) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		start := time.Now()
@@ -49,11 +54,23 @@ func RequestLogger(logger *slog.Logger) fiber.Handler {
 
 		requestID, _ := c.Locals("requestid").(string)
 
+		// Tentukan status yang SEBENARNYA terjadi, bukan yang kebetulan
+		// masih tertulis di response saat ini.
+		status := c.Response().StatusCode()
+		var appErr *helper.AppError
+		if errors.As(err, &appErr) {
+			status = appErr.Status
+		} else if fe, ok := err.(*fiber.Error); ok {
+			status = fe.Code
+		} else if err != nil {
+			status = fiber.StatusInternalServerError
+		}
+
 		fields := []any{
 			slog.String("request_id", requestID),
 			slog.String("method", c.Method()),
 			slog.String("path", c.Path()),
-			slog.Int("status", c.Response().StatusCode()),
+			slog.Int("status", status),
 			slog.Duration("duration", time.Since(start)),
 			slog.String("ip", c.IP()),
 		}
