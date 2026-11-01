@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"reflect"
 	"strings"
 	"unicode"
 
@@ -82,9 +83,21 @@ func describeTag(fe validator.FieldError) string {
 	case "required":
 		return "wajib diisi"
 	case "min":
-		return "minimal " + fe.Param() + " karakter/nilai"
+		switch fe.Kind() {
+		case reflect.String:
+			return "minimal " + fe.Param() + " karakter"
+		case reflect.Slice, reflect.Array, reflect.Map:
+			return "minimal " + fe.Param() + " item"
+		}
+		return "nilai minimal " + fe.Param()
 	case "max":
-		return "maksimal " + fe.Param() + " karakter/nilai"
+		switch fe.Kind() {
+		case reflect.String:
+			return "maksimal " + fe.Param() + " karakter"
+		case reflect.Slice, reflect.Array, reflect.Map:
+			return "maksimal " + fe.Param() + " item"
+		}
+		return "nilai maksimal " + fe.Param()
 	case "alphanum":
 		return "hanya boleh huruf dan angka"
 	case "gte":

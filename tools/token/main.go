@@ -47,5 +47,6 @@ func main() {
 		fmt.Printf("export %s=%q\n", varName, t)
 	}
 	print("admin", "ADMIN_TOKEN")
+	print("mhs001", "MHS_TOKEN")
 	print("sari", "USER_TOKEN")
 }
