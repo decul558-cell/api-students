@@ -15,14 +15,15 @@ import (
 
 // Dependencies mengumpulkan seluruh hal yang dibutuhkan route.
 type Dependencies struct {
-	Pool           *pgxpool.Pool
-	JWT            *helper.JWTManager
-	Permissions    *helper.PermissionSet
-	StudentService *service.StudentService
-	AuthService    *service.AuthService
-	CourseService  *service.CourseService
-	Mongo          *mongo.Client
-	ReviewService  *service.ReviewService
+	Pool             *pgxpool.Pool
+	JWT              *helper.JWTManager
+	Permissions      *helper.PermissionSet
+	StudentService   *service.StudentService
+	AuthService      *service.AuthService
+	CourseService    *service.CourseService
+	Mongo            *mongo.Client
+	ReviewService    *service.ReviewService
+	PortfolioService *service.PortfolioService
 }
 
 func Register(app *fiber.App, deps Dependencies) {
@@ -99,6 +100,17 @@ func Register(app *fiber.App, deps Dependencies) {
 	reviews.Delete("/:id", deps.ReviewService.Delete)
 	reviews.Post("/:id/replies", deps.ReviewService.Reply)
 	reviews.Post("/:id/helpful", deps.ReviewService.MarkHelpful)
+
+	// --- portofolio mahasiswa (MongoDB) ---
+	students.Get("/:id/portfolio", deps.PortfolioService.Get)
+	students.Put("/:id/portfolio", deps.PortfolioService.Put)
+	students.Post("/:id/portfolio/projects", deps.PortfolioService.AddProject)
+	students.Delete("/:id/portfolio/projects/:projectId", deps.PortfolioService.RemoveProject)
+
+	portfolios := api.Group("/portfolios",
+		middleware.RequireJSON,
+		middleware.RequireAuth(deps.JWT))
+	portfolios.Get("/stats/technologies", deps.PortfolioService.TopTechnologies)
 }
 
 // healthCheck memeriksa DUA database. Aplikasi dianggap sehat hanya bila

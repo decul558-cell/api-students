@@ -87,6 +87,13 @@ func main() {
 		os.Exit(1)
 	}
 	reviewService := service.NewReviewService(reviewRepository, courseRepository, permissions)
+
+	portfolioRepository := repository.NewPortfolioRepository(mongoDB)
+	if err := portfolioRepository.EnsureIndexes(context.Background()); err != nil {
+		logger.Error("gagal membuat index portofolio", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	portfolioService := service.NewPortfolioService(portfolioRepository, studentRepository, permissions)
 	authService := service.NewAuthService(
 		userRepository, tokenRepository, jwtManager, permissions,
 		time.Duration(config.GetEnvInt("JWT_REFRESH_TTL_DAYS", 7))*24*time.Hour,
@@ -94,14 +101,15 @@ func main() {
 
 	// 5. Aplikasi
 	app := config.NewApp(logger, route.Dependencies{
-		Pool:           pool,
-		JWT:            jwtManager,
-		Permissions:    permissions,
-		StudentService: studentService,
-		AuthService:    authService,
-		CourseService:  courseService,
-		Mongo:          mongoClient,
-		ReviewService:  reviewService,
+		Pool:             pool,
+		JWT:              jwtManager,
+		Permissions:      permissions,
+		StudentService:   studentService,
+		AuthService:      authService,
+		CourseService:    courseService,
+		Mongo:            mongoClient,
+		ReviewService:    reviewService,
+		PortfolioService: portfolioService,
 	})
 	port := config.GetEnv("APP_PORT", "3000")
 
